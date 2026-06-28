@@ -1,0 +1,138 @@
+services:
+  # ===========================================================================
+  # 1. RELATIONAL DATABASES (SQL)
+  # ===========================================================================
+  mysql:
+    image: mysql:8.0
+    container_name: dev_mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: dev_db
+    ports: ["3306:3306"]
+    volumes: ["./data/mysql:/var/lib/mysql"]
+
+  postgres:
+    image: postgres:latest
+    container_name: dev_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: rootpassword
+      POSTGRES_DB: dev_db
+    ports: ["5432:5432"]
+    volumes: ["./data/postgres:/var/lib/postgresql"]
+
+  # ===========================================================================
+  # 2. NO-SQL & CACHING
+  # ===========================================================================
+  mongodb:
+    image: mongo:latest
+    container_name: dev_mongodb
+    restart: unless-stopped
+    ports: ["27017:27017"]
+    volumes: ["./data/mongodb:/data/db"]
+
+  redis:
+    image: redis:alpine
+    container_name: dev_redis
+    restart: unless-stopped
+    ports: ["6379:6379"]
+    volumes: ["./data/redis:/data"]
+
+  # ===========================================================================
+  # 3. SEARCH & ANALYTICS
+  # ===========================================================================
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+    container_name: dev_elasticsearch
+    restart: unless-stopped
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+    ports: ["9200:9200"]
+    volumes: ["./data/elasticsearch:/usr/share/elasticsearch/data"]
+
+  # ===========================================================================
+  # 4. MESSAGE BROKERS
+  # ===========================================================================
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: dev_rabbitmq
+    restart: unless-stopped
+    ports:
+      - "5672:5672"   # RabbitMQ Port
+      - "15672:15672" # Management UI
+    volumes: ["./data/rabbitmq:/var/lib/rabbitmq"]
+
+  kafka:
+    image: apache/kafka:latest
+    container_name: dev_kafka
+    restart: unless-stopped
+    environment:
+      # Identifiants du nœud KRaft
+      - KAFKA_NODE_ID=1
+      - KAFKA_PROCESS_ROLES=broker,controller
+      # Configuration des écouteurs (Interne, Externe et Contrôleur KRaft)
+      - KAFKA_LISTENERS=PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      - KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://localhost:9092
+      - KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      # Élection du contrôleur KRaft
+      - KAFKA_CONTROLLER_QUORUM_VOTERS=1@localhost:9093
+      - KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER
+      # Configuration requise pour le stockage des logs
+      - KAFKA_LOG_DIRS=/var/lib/kafka/data
+    ports: 
+      - "9092:9092"
+    volumes: 
+      - "./data/kafka:/var/lib/kafka/data"
+
+  # ===========================================================================
+  # 5. PROXY & API GATEWAY
+  # ===========================================================================
+  traefik:
+    image: traefik:v2.10
+    container_name: dev_traefik
+    restart: unless-stopped
+    command:
+      - "--api.insecure=true"
+      - "--providers.docker=true"
+      - "--entrypoints.web.address=:80"
+    ports:
+      - "80:80"         # HTTP
+      - "8080:8080"     # Dashboard
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+
+  # ===========================================================================
+  # 6. EMAIL TESTING (MailDev)
+  # ===========================================================================
+  maildev:
+    image: maildev/maildev
+    container_name: dev_maildev
+    command: bin/maildev --web 80 --smtp 25 --hide-extensions STARTTLS
+    ports:
+      - "8025:80"   # Web UI
+      - "1025:25"   # SMTP Server
+    restart: unless-stopped
+
+  # ===========================================================================
+  # 7. MANAGEMENT GUIs
+  # ===========================================================================
+  phpmyadmin:
+    image: phpmyadmin:latest
+    container_name: dev_phpmyadmin
+    restart: unless-stopped
+    environment:
+      PMA_HOST: mysql
+    ports: ["8081:80"]
+    depends_on: [mysql]
+
+  pgadmin:
+    image: dpage/pgadmin4
+    container_name: dev_pgadmin
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@admin.com
+      PGADMIN_DEFAULT_PASSWORD: adminpassword
+    ports: ["8082:80"]
+    depends_on: [postgres]
