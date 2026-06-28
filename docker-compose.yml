@@ -11,6 +11,8 @@ services:
       MYSQL_DATABASE: dev_db
     ports: ["3306:3306"]
     volumes: ["./data/mysql:/var/lib/mysql"]
+    networks:
+      - traefik-net
 
   postgres:
     image: postgres:latest
@@ -20,7 +22,9 @@ services:
       POSTGRES_PASSWORD: rootpassword
       POSTGRES_DB: dev_db
     ports: ["5432:5432"]
-    volumes: ["./data/postgres:/var/lib/postgresql"]
+    volumes: ["./data/postgres:/var/lib/postgresql/data"]  # fixed path
+    networks:
+      - traefik-net
 
   # ===========================================================================
   # 2. NO-SQL & CACHING
@@ -31,6 +35,8 @@ services:
     restart: unless-stopped
     ports: ["27017:27017"]
     volumes: ["./data/mongodb:/data/db"]
+    networks:
+      - traefik-net
 
   redis:
     image: redis:alpine
@@ -38,19 +44,23 @@ services:
     restart: unless-stopped
     ports: ["6379:6379"]
     volumes: ["./data/redis:/data"]
+    networks:
+      - traefik-net
 
   # ===========================================================================
   # 3. SEARCH & ANALYTICS
   # ===========================================================================
-  elasticsearch:
-    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
-    container_name: dev_elasticsearch
-    restart: unless-stopped
-    environment:
-      - discovery.type=single-node
-      - xpack.security.enabled=false
-    ports: ["9200:9200"]
-    volumes: ["./data/elasticsearch:/usr/share/elasticsearch/data"]
+  # elasticsearch:
+  #   image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+  #   container_name: dev_elasticsearch
+  #   restart: unless-stopped
+  #   environment:
+  #     - discovery.type=single-node
+  #     - xpack.security.enabled=false
+  #   ports: ["9200:9200"]
+  #   volumes: ["./data/elasticsearch:/usr/share/elasticsearch/data"]
+  #   networks:
+  #     - traefik-net
 
   # ===========================================================================
   # 4. MESSAGE BROKERS
@@ -60,48 +70,55 @@ services:
     container_name: dev_rabbitmq
     restart: unless-stopped
     ports:
-      - "5672:5672"   # RabbitMQ Port
+      - "5672:5672"   # AMQP
       - "15672:15672" # Management UI
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.rabbitmq.rule=Host(`rabbitmq.localhost`)"
+      - "traefik.http.routers.rabbitmq.entrypoints=web"
+      - "traefik.http.routers.rabbitmq.service=rabbitmq"
+      - "traefik.http.services.rabbitmq.loadbalancer.server.port=15672"
     volumes: ["./data/rabbitmq:/var/lib/rabbitmq"]
+    depends_on:
+      - traefik
+    networks:
+      - traefik-net
 
   kafka:
     image: apache/kafka:latest
     container_name: dev_kafka
     restart: unless-stopped
     environment:
-      # Identifiants du nœud KRaft
-      - KAFKA_NODE_ID=1
-      - KAFKA_PROCESS_ROLES=broker,controller
-      # Configuration des écouteurs (Interne, Externe et Contrôleur KRaft)
-      - KAFKA_LISTENERS=PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
-      - KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://localhost:9092
-      - KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
-      # Élection du contrôleur KRaft
-      - KAFKA_CONTROLLER_QUORUM_VOTERS=1@localhost:9093
-      - KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER
-      # Configuration requise pour le stockage des logs
-      - KAFKA_LOG_DIRS=/var/lib/kafka/data
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
     ports: 
       - "9092:9092"
-    volumes: 
+    volumes:
       - "./data/kafka:/var/lib/kafka/data"
+    networks:
+      - traefik-net
 
   # ===========================================================================
   # 5. PROXY & API GATEWAY
   # ===========================================================================
   traefik:
-    image: traefik:v2.10
+    image: traefik:3.7.5
     container_name: dev_traefik
     restart: unless-stopped
-    command:
-      - "--api.insecure=true"
-      - "--providers.docker=true"
-      - "--entrypoints.web.address=:80"
     ports:
-      - "80:80"         # HTTP
-      - "8080:8080"     # Dashboard
+      - "80:80"      # HTTP
+      - "8080:8080"  # Dashboard
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - ./config/traefik.yaml:/etc/traefik/traefik.yaml:ro
+    networks:
+      - traefik-net
 
   # ===========================================================================
   # 6. EMAIL TESTING (MailDev)
@@ -112,8 +129,18 @@ services:
     command: bin/maildev --web 80 --smtp 25 --hide-extensions STARTTLS
     ports:
       - "8025:80"   # Web UI
-      - "1025:25"   # SMTP Server
+      - "1025:25"   # SMTP
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.maildev.rule=Host(`maildev.localhost`)"
+      - "traefik.http.routers.maildev.entrypoints=web"
+      - "traefik.http.routers.maildev.service=maildev"
+      - "traefik.http.services.maildev.loadbalancer.server.port=80"
     restart: unless-stopped
+    depends_on:
+      - traefik
+    networks:
+      - traefik-net
 
   # ===========================================================================
   # 7. MANAGEMENT GUIs
@@ -125,7 +152,15 @@ services:
     environment:
       PMA_HOST: mysql
     ports: ["8081:80"]
-    depends_on: [mysql]
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.phpmyadmin.rule=Host(`phpmyadmin.localhost`)"
+      - "traefik.http.routers.phpmyadmin.entrypoints=web"
+      - "traefik.http.routers.phpmyadmin.service=phpmyadmin"
+      - "traefik.http.services.phpmyadmin.loadbalancer.server.port=80"
+    depends_on: [mysql, traefik]
+    networks:
+      - traefik-net
 
   pgadmin:
     image: dpage/pgadmin4
@@ -135,4 +170,16 @@ services:
       PGADMIN_DEFAULT_EMAIL: admin@admin.com
       PGADMIN_DEFAULT_PASSWORD: adminpassword
     ports: ["8082:80"]
-    depends_on: [postgres]
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.pgadmin.rule=Host(`pgadmin.localhost`)"
+      - "traefik.http.routers.pgadmin.entrypoints=web"
+      - "traefik.http.routers.pgadmin.service=pgadmin"
+      - "traefik.http.services.pgadmin.loadbalancer.server.port=80"
+    depends_on: [postgres, traefik]
+    networks:
+      - traefik-net
+
+networks:
+  traefik-net:
+    driver: bridge
